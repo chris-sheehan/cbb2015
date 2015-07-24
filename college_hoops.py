@@ -5,22 +5,29 @@
 ## Get Team/Conference by Yearn
 import numpy as np
 import pandas as pd
+import sqlite3
 import logging
+import time
 
-# import requests
-# from bs4 import BeautifulSoup as bsoup
 from YearTeamsConferenceScraper import YearTeamsConferenceScraper
 from TeamRosterScraper import TeamRosterScraper
+from YearTeamGameSummary import YearTeamGameSummaryScraper
+from GameBoxScraper import GameBoxScraper
 
 
-logging.basicConfig(filename='roster_scraping.log', level=logging.ERROR,
+logging.basicConfig(filename='box_scraping.log', level=logging.INFO,
         format='%(asctime)s | %(levelname)s | %(message)s',
         datefmt='%m/%d/%Y %I:%M:%S %p')
 logger = logging.getLogger(__name__)
 
 
-_YEARS_TO_SCRAPE = range(2001, 2016)
+_YEARS_TO_SCRAPE = range(2011, 2016)
 _URL_BASE = "http://www.sports-reference.com"
+DB_NAME = 'game_stats'
+DB_NAME_ADV = 'game_stats_adv'
+
+def connect_db():
+	sqlite.connect('game_stats.db')
 
 def get_all_teams_and_conferences():
 	df = pd.DataFrame(None, columns = ['conference', 'team', 'tm_link', 'year'])
@@ -56,43 +63,63 @@ def concat_all_teams_rosters(lst_dfRosters):
 # dfTeams = get_all_teams_and_conferences()
 # dfTeams.reset_index(inplace = True)
 # dfTeams.to_csv('teams.csv', index = False)
-dfTeams = pd.read_csv('teams.csv')
-dfTeams.year = dfTeams.year.map(int)
-
-# lst_dfRosters = []
-# for n in dfTeams.index:
-# 	r = dfTeams.loc[n]
-# 	try:
-# 		lst_dfRosters.append(get_team_roster(r.team, r.tm_link, r.year))
-# 	except Exception, e:
-# 		print 'Error scraping: {tm_link}, {year}'.format(tm_link = r.tm_link, year = r.year)
-# 		logger.info('Error scraping: {tm_link}, {year}'.format(tm_link = r.tm_link, year = r.year))
+## dfTeams = pd.read_csv('teams.csv')
+## dfTeams.year = dfTeams.year.map(int)
+## dfTeams = dfTeams[dfTeams.year >= 2011]
 
 
-## Random Forest Regressor for Height based on inputs...
-# class_mapping = {
-#     'SR' : 4,
-#     'JR' : 3,
-#     'SO' : 2,
-#     'FR' : 1
-# }
-# dfRosters['class_id'] = dfRosters['class'].apply(lambda c: class_mapping[c])
-# dfRosters = dfRosters.join(pd.get_dummies(dfRosters.pos_primary))
-# dfRosters['conf_clean'] = dfRosters.conference.apply(lambda c: c.split(' (')[0])
-# dfRosters = dfRosters.join(pd.get_dummies(dfRosters.conf_clean))
-# Xcol = ['year', 'class_id', 'multipos'] + dfRosters.pos_primary.unique().tolist() + dfRosters.conf_clean.unique().tolist()
-# ycol = 'ht'
-# {'mse_test': 4.3795774070433247,
-#  'mse_train': 4.2341248801926294,
-#  'params': {'max_depth': 10,
-#   'max_features': 10,
-#   'min_samples_leaf': 3,
-#   'min_samples_split': 2,
-#   'n_estimators': 50,
-#   'n_jobs': -1},
-#  'score_test': 0.66486532638456386,
-#  'score_train': 0.66788937194042708,
-#  'ypred_test': array([ 82.70081221,  78.99892045,  74.1624992 , ...,  74.26057131,
-#          73.87159585,  74.45164459]),
-#  'ypred_train': array([ 74.35340557,  74.1624992 ,  79.25706683, ...,  74.08744258,
-#          74.1624992 ,  73.92758619])}
+def get_game_info_and_links(tm_link, year):
+	global dfGamesFinal
+	try:
+		scraper = YearTeamGameSummaryScraper(year, tm_link)
+		games = scraper.get_year_team_summaries()
+		dfGames = pd.DataFrame(games)
+		dfGamesFinal = pd.concat([dfGamesFinal, dfGames], axis = 0)
+	except:
+		pass
+
+# dfGamesFinal = pd.DataFrame()
+# dfTeams.apply(lambda r: get_game_info_and_links(r.tm_link, r.year), axis = 1)
+
+
+def scrape_games_stat_tables(game_id):
+	global dfGameStats
+	global dfGameStatsAdvanced
+	try:
+		logger.info(game_id)
+ 		scraper = GameBoxScraper(game_id)
+		dfStats, dfStatsAdvanced = scraper.get_game_stats()
+
+		dfGameStats = pd.concat([dfGameStats, dfStats], axis = 0)
+		dfGameStatsAdvanced = pd.concat([dfGameStatsAdvanced, dfStatsAdvanced], axis = 0)
+	except:
+		logger.info('Error Scraping: {gm}'.format(gm = game_id))
+		pass
+
+if __name__ == '__main__':
+	dfGames = pd.read_csv('games_summary.csv')
+	dfGames.sort('box', inplace = True)
+	dfGames.reset_index(drop = True, inplace = True)
+
+	dfGameStats = pd.DataFrame()
+	dfGameStatsAdvanced = pd.DataFrame()
+	# dfGames[['box']].drop_duplicates().head(10).apply(lambda g: scrape_games_stat_tables(g))
+
+	conn = sqlite3.connect('game_stats.db')
+	# Resume from #38667
+	# for ii, g in enumerate(dfGames.box.unique()):
+	for ii, g in enumerate(dfGames.ix[56215:].box.unique()):
+		if (ii % 100 == 0) & (ii > 0):
+			dfGameStats.to_sql('game_stats', conn, flavor = 'sqlite', if_exists = 'append')
+			dfGameStatsAdvanced.to_sql('game_stats_adv', conn, flavor = 'sqlite', if_exists = 'append')
+			dfGameStats = pd.DataFrame()
+			dfGameStatsAdvanced = pd.DataFrame()
+			print g
+		scrape_games_stat_tables(g)
+		time.sleep(.5)
+	# dfGameStats.to_csv('games_stats.csv', index = False)
+	# dfGameStatsAdvanced.to_csv('games_stats_adv.csv', index = False)
+	if dfGameStats.empty == False:
+		dfGameStats.to_sql('game_stats', conn, flavor = 'sqlite', if_exists = 'append')
+		dfGameStatsAdvanced.to_sql('game_stats_adv', conn, flavor = 'sqlite', if_exists = 'append')
+	conn.close()

@@ -19,9 +19,9 @@ class YearTeamsConferenceScraper(object):
 	def get_teams(self):
 		teams = []
 		tbl_body = self.soup.find('table',{'id':'ratings'}).find('tbody')
-		rows = tbl_body.findAll('tr')
+		rows = tbl_body.findAll('tr', {'class' : ''})
 		for row in rows:
-			row_class = row.attrs['class'][0]
+			# row_class = row.attrs['class'][0] # s/b unnecessary with class criteria above
 			if row_class == '':
 				cells = row.findAll('td', {'align' : 'left'})
 				tm, conf = [c.text for c in cells]
